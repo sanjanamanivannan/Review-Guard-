@@ -1,17 +1,20 @@
 {
-    "manifest_version": 3,
-    "name": "Review Trust Analyzer",
-    "version": "1.0",
-    "description": "Analyze product reviews for suspicious patterns.",
-    "permissions": ["activeTab", "scripting"],
-    "host_permissions": ["<all_urls>"],
-    "action": {
-      "default_popup": "popup.html"
-    },
-    "content_scripts": [
-      {
-        "matches": ["<all_urls>"],
-        "js": ["content.js"]
-      }
-    ]
-  }
+  "manifest_version": 3,
+  "name": "Clear Cosmetics",
+  "version": "1.0",
+  "description": "Get honest, comprehensive summaries of makeup product reviews from across the web.",
+
+  "permissions": ["activeTab", "scripting"],
+  "host_permissions": ["<all_urls>"],
+
+  "action": {
+    "default_popup": "popup.html"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"]
+    }
+  ]
+}

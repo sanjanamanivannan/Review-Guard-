@@ -1,29 +1,37 @@
-document.getElementById("analyzeBtn").addEventListener("click", async () => {
-    const resultDiv = document.getElementById("result");
-    resultDiv.innerText = "Analyzing...";
-  
-    try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  
-      const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_REVIEWS" });
-  
-      const backendRes = await fetch("http://localhost:5001/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ reviews: response.reviews })
-      });
-  
-      const data = await backendRes.json();
-  
-      resultDiv.innerText = `
-  Trust Score: ${data.trustScore}
-  Warnings: ${data.warnings.join(", ")}
-  Review Count: ${data.reviewCount}
-      `;
-    } catch (err) {
-      console.error(err);
-      resultDiv.innerText = "Failed to analyze reviews.";
+document.addEventListener("DOMContentLoaded", () => {
+  const summarizeBtn = document.getElementById("summarizeBtn");
+  const summaryBox = document.getElementById("summaryBox");
+  const searchInput = document.getElementById("search");
+
+  let showSummary = false;
+
+  summarizeBtn.addEventListener("click", () => {
+    showSummary = !showSummary;
+
+    if (showSummary) {
+      summaryBox.classList.remove("hidden");
+
+      const query = searchInput.value.trim();
+
+      if (query) {
+        summaryBox.innerHTML = `
+          <p class="summary-text">
+            Summary for: <strong>${escapeHtml(query)}</strong>
+          </p>
+        `;
+      } else {
+        summaryBox.innerHTML = `
+          <p class="summary-text">Summary will appear here...</p>
+        `;
+      }
+    } else {
+      summaryBox.classList.add("hidden");
     }
   });
+
+  function escapeHtml(str) {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+});
