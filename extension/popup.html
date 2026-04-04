@@ -1,15 +1,41 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <title>Review Analyzer</title>
-    <link rel="stylesheet" href="styles.css" />
-  </head>
-  <body>
-    <h2>Review Analyzer</h2>
-    <button id="analyzeBtn">Analyze Reviews</button>
-    <div id="result"></div>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Clear Cosmetics</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="popup-card">
+    <div class="popup-content">
+      <div class="intro">
+        <h1 class="title">Welcome to ClearCosmetics</h1>
+        <p class="description">
+          Your trusted review aggregator for makeup products. Get honest, comprehensive summaries from verified reviews across the web.
+        </p>
+      </div>
 
-    <script src="popup.js"></script>
-  </body>
+      <div class="input-group">
+        <label for="search" class="label">Search specifications (optional)</label>
+        <input
+          id="search"
+          type="text"
+          placeholder="e.g., dry skin, vegan, cruelty-free..."
+          class="search-input"
+        />
+      </div>
+
+      <button id="summarizeBtn" class="summarize-btn">
+        Summarize Reviews
+      </button>
+
+      <div id="summaryBox" class="summary-box hidden">
+        <p class="summary-text">Summary will appear here...</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
 </html>
