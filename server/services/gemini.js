@@ -41,3 +41,4 @@
 // TODO: implement synthesizeRating(evidence) using @google/generative-ai
 
 module.exports = {};
+

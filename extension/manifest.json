@@ -5,7 +5,7 @@
   "description": "Get honest, comprehensive summaries of makeup product reviews from across the web.",
 
   "permissions": ["activeTab", "scripting"],
-  "host_permissions": ["<all_urls>"],
+  "host_permissions": ["<all_urls>", "http://localhost:5001/"],
 
   "action": {
     "default_popup": "popup.html"

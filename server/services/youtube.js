@@ -4,7 +4,6 @@
 // This module does NOT score or synthesize — that is gemini.js's job.
 
 const axios = require("axios");
-const { YoutubeTranscript } = require("youtube-transcript");
 
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
@@ -35,10 +34,11 @@ const COMMENT_BOOST_KEYWORDS = [
   "totally agree",
 ];
 
+
 // ─── STEP 1: Search YouTube ───────────────────────────────────────────────────
 
 async function searchYouTube(productName) {
-  const query = `${productName} makeup review`;
+  const query = `${productName} review`;
   const response = await axios.get(`${YOUTUBE_API_BASE}/search`, {
     params: {
       part: "snippet",
@@ -48,8 +48,17 @@ async function searchYouTube(productName) {
       key: process.env.YOUTUBE_API_KEY,
     },
   });
-  return response.data.items;
+
+  // If YouTube returned an error object, log it and return empty
+  // This catches invalid API keys, disabled APIs, quota exceeded, etc.
+  if (response.data.error) {
+    console.error("YouTube API error:", JSON.stringify(response.data.error, null, 2));
+    return [];
+  }
+
+  return response.data.items || [];
 }
+
 
 // ─── STEP 2 helpers ──────────────────────────────────────────────────────────
 
@@ -61,6 +70,12 @@ async function getVideoDetails(videoId) {
       key: process.env.YOUTUBE_API_KEY,
     },
   });
+
+  if (response.data.error) {
+    console.error("YouTube video details error:", JSON.stringify(response.data.error, null, 2));
+    return null;
+  }
+
   return response.data.items[0] || null;
 }
 
@@ -120,23 +135,12 @@ function calculateCredibilityScore({ isSponsored, hasBoost, likeToViewRatio, boo
   return Math.max(0, Math.min(100, score));
 }
 
-// ─── STEP 4: Pull transcript ──────────────────────────────────────────────────
-
-async function getTranscript(videoId) {
-  try {
-    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-    return transcript.map((chunk) => chunk.text);
-  } catch {
-    // Transcript unavailable (disabled captions, private video, etc.) — skip gracefully
-    return [];
-  }
-}
 
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 /**
  * Given a product name, searches YouTube, validates videos for credibility,
- * pulls transcripts from the top 5, and returns structured evidence.
+ * and returns the top 5 ranked videos for Gemini to analyze later.
  *
  * @param {string} productName — e.g. "Rare Beauty Soft Pinch Tinted Lip Oil"
  * @returns {Promise<{
@@ -151,6 +155,17 @@ async function getYouTubeEvidence(productName) {
 
   // STEP 1 — Search
   const searchResults = await searchYouTube(productName);
+
+  // If search returned nothing (e.g. bad API key), return empty structure
+  if (searchResults.length === 0) {
+    console.warn("No YouTube search results returned — check API key and quota");
+    return {
+      videos: [],
+      totalVideosChecked: 0,
+      totalVideosRejected: 0,
+      rejectionReasons: [],
+    };
+  }
 
   // STEP 2 — Validate each candidate
   const validated = [];
@@ -167,8 +182,8 @@ async function getYouTubeEvidence(productName) {
 
     const description = details.snippet.description || "";
     const stats = details.statistics || {};
-    const viewCount = parseInt(stats.viewCount) || 0;
-    const likeCount = parseInt(stats.likeCount) || 0;
+    const viewCount = parseInt(stats.viewCount, 10) || 0;
+    const likeCount = parseInt(stats.likeCount, 10) || 0;
     const likeToViewRatio = viewCount > 0 ? likeCount / viewCount : 0;
 
     const { isSponsored, hasBoost } = checkSponsorship(description);
@@ -176,7 +191,7 @@ async function getYouTubeEvidence(productName) {
     const comments = await getTopComments(videoId);
     const { flagged, flagCount, boostCount } = checkComments(comments);
 
-    // COMMENT CREDIBILITY CHECK — remove from pool entirely if flagged
+    // Remove from pool entirely if flagged by multiple comments
     if (flagged) {
       rejectionReasons.push({
         videoId,
@@ -196,11 +211,16 @@ async function getYouTubeEvidence(productName) {
     validated.push({
       videoId,
       title,
+      channelTitle: details.snippet.channelTitle || "",
+      description,
+      publishedAt: details.snippet.publishedAt || "",
+      thumbnail: details.snippet.thumbnails?.high?.url || "",
       viewCount,
       likeCount,
       likeToViewRatio,
       sponsored: isSponsored,
       credibilityScore,
+      url: `https://www.youtube.com/watch?v=${videoId}`,
     });
   }
 
@@ -209,12 +229,6 @@ async function getYouTubeEvidence(productName) {
     .sort((a, b) => b.credibilityScore - a.credibilityScore)
     .slice(0, 5);
 
-  // STEP 4 — Pull transcripts for selected videos
-  for (const video of top5) {
-    video.transcriptChunks = await getTranscript(video.videoId);
-  }
-
-  // STEP 5 — Return structured output
   return {
     videos: top5,
     totalVideosChecked: searchResults.length,

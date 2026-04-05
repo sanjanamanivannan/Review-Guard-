@@ -3,62 +3,38 @@ const cors = require("cors");
 require("dotenv").config();
 
 const { getYouTubeEvidence } = require("./services/youtube");
-// const { synthesizeRating } = require("./services/gemini"); // uncomment when gemini.js is built
 
 const app = express();
 const PORT = process.env.PORT || 5001;
 
-app.use(cors());
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 app.get("/", (_req, res) => {
   res.json({ message: "ClearCosmetics backend is running" });
 });
 
-// POST /analyze
-// Accepts scraped product data from the extension (Sharana's scraper output),
-// fetches YouTube evidence, runs Gemini synthesis, and returns a rating.
-//
-// Request body:
-// {
-//   productName: string,
-//   productBrand: string,
-//   onPageRating: number,
-//   onPageReviews: string[]
-// }
-//
-// Response:
-// {
-//   rating: "Highly Recommended" | "Recommended" | "Mixed" | "Not Recommended",
-//   score: number,
-//   pros: string[],
-//   cons: string[],
-//   evidenceSummary: string,
-//   onSiteVsExternalGap: string,
-//   youtubeEvidence: object    // included for debugging during dev
-// }
+// TESTING — delete later
+app.get("/test-youtube", async (req, res) => {
+  try {
+    const result = await getYouTubeEvidence("ILIA Triclone Skin Tech Foundation");
+    console.log("YouTube result:", JSON.stringify(result, null, 2));
+    res.json(result);
+  } catch (err) {
+    console.error("YouTube test failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/analyze", async (req, res) => {
-  // productBrand, onPageRating, onPageReviews will be passed to Gemini in Phase 1
-  const { productName, productBrand: _productBrand, onPageRating: _onPageRating, onPageReviews: _onPageReviews } = req.body;
+  const { productName, brand } = req.body;
 
   if (!productName) {
     return res.status(400).json({ error: "productName is required" });
   }
 
   try {
-    // STEP 1: Fetch and validate YouTube evidence
-    const youtubeEvidence = await getYouTubeEvidence(productName);
-
-    // STEP 2: Synthesize with Gemini (stubbed until gemini.js is built)
-    // const rating = await synthesizeRating({
-    //   productName,
-    //   productBrand,
-    //   onPageRating,
-    //   onPageReviews,
-    //   youtubeEvidence,
-    // });
-
-    // Temporary stub response — replace with real Gemini call once gemini.js is built
+    const youtubeEvidence = await getYouTubeEvidence(`${brand} ${productName}`.trim());
     const rating = {
       rating: "Recommended",
       score: 72,
@@ -67,7 +43,6 @@ app.post("/analyze", async (req, res) => {
       evidenceSummary: "YouTube evidence fetched. Gemini synthesis pending.",
       onSiteVsExternalGap: "Pending Gemini integration.",
     };
-
     res.json({ ...rating, youtubeEvidence });
   } catch (err) {
     console.error("Error in /analyze:", err.message);

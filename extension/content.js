@@ -194,11 +194,17 @@ async function extractProductData() {
 
 // Sephora stores the name as an attribute value, not text content
 function extractProductName() {
+  // Sephora stores the product name in a span with data-at="product_name"
+  const sephoraNameEl = document.querySelector('[data-at="product_name"]');
+  if (sephoraNameEl) return cleanText(getText(sephoraNameEl));
+
+  // Fallback: check data-cnstrc-item-name attribute
   const sephoraEl = document.querySelector('[data-cnstrc-item-name]');
   if (sephoraEl) {
     const attrVal = sephoraEl.getAttribute('data-cnstrc-item-name');
     if (attrVal) return cleanText(attrVal);
   }
+
   return queryText([
     '[data-testid="product-name"]',
     '[data-testid="product-title"]',
@@ -210,6 +216,10 @@ function extractProductName() {
 }
 
 function extractBrand() {
+  // Sephora stores the brand in an anchor with data-at="brand_name"
+  const sephoraBrandEl = document.querySelector('[data-at="brand_name"]');
+  if (sephoraBrandEl) return cleanText(getText(sephoraBrandEl));
+
   const selectors = [
     '[data-testid="brand-name"]',
     '[data-testid="brand"]',
@@ -218,6 +228,7 @@ function extractBrand() {
     '#bylineInfo',
     'meta[name="brand"]'
   ];
+
   for (const selector of selectors) {
     const el = document.querySelector(selector);
     if (!el) continue;
@@ -229,7 +240,7 @@ function extractBrand() {
       if (text) return text;
     }
   }
-  // Last resort: look for "Brand: XYZ" anywhere in the page text
+
   const brandMatch = document.body.innerText.match(/brand[:\s]+([A-Za-z0-9&' -]+)/i);
   return brandMatch ? cleanText(brandMatch[1]) : "";
 }
