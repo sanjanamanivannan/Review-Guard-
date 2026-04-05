@@ -1,6 +1,6 @@
 // services/youtube.js
 // Responsibility: Search YouTube for product reviews, validate video credibility,
-// and return structured evidence.
+// fetch transcripts via Supadata, and return structured evidence.
 // This module does NOT score or synthesize — that is gemini.js's job.
 
 const axios = require("axios");
@@ -22,13 +22,14 @@ const COMMENT_BOOST_KEYWORDS = [
 // ─── STEP 1: Search YouTube ───────────────────────────────────────────────────
 
 async function searchYouTube(productName) {
-  const query = `${productName} review`;
+  const query = `${productName} full review`;
   const response = await axios.get(`${YOUTUBE_API_BASE}/search`, {
     params: {
       part: "snippet",
       q: query,
       type: "video",
       maxResults: 10,
+      videoDuration: "medium",
       key: process.env.YOUTUBE_API_KEY,
     },
   });
@@ -79,6 +80,47 @@ async function getTopComments(videoId) {
   }
 }
 
+// Fetches transcript using Supadata's free YouTube transcript API.
+// Only called for the top 5 videos after credibility scoring —
+// so we never fetch more transcripts than we actually use.
+async function getVideoTranscript(videoId) {
+  try {
+    console.log(`Fetching transcript for ${videoId} via Supadata...`);
+
+    const response = await axios.get("https://api.supadata.ai/v1/youtube/transcript", {
+      params: {
+        videoId,
+        lang: "en",
+      },
+      headers: {
+        "x-api-key": process.env.SUPADATA_API_KEY,
+      },
+    });
+
+    const content = response.data?.content;
+
+    if (!content || content.length === 0) {
+      console.log(`No transcript content returned for ${videoId}`);
+      return null;
+    }
+
+    const text = Array.isArray(content)
+      ? content.map(c => c.text).join(" ").slice(0, 2000).trim()
+      : String(content).slice(0, 2000).trim();
+
+    console.log(`Transcript fetched for ${videoId}: ${text.length} chars`);
+    return text;
+
+  } catch (err) {
+    if (err.response) {
+      console.log(`Transcript failed for ${videoId}: HTTP ${err.response.status} — ${JSON.stringify(err.response.data)}`);
+    } else {
+      console.log(`Transcript failed for ${videoId}: ${err.message}`);
+    }
+    return null;
+  }
+}
+
 function checkSponsorship(description) {
   const lower = description.toLowerCase();
   return {
@@ -95,9 +137,9 @@ function checkComments(comments) {
 
 function calculateCredibilityScore({ isSponsored, hasBoost, likeToViewRatio, boostCount }) {
   let score = 50;
-  if (isSponsored)               score -= 20;
-  if (hasBoost)                  score += 10;
-  if (likeToViewRatio >= 0.04)   score += 15;
+  if (isSponsored)                  score -= 20;
+  if (hasBoost)                     score += 10;
+  if (likeToViewRatio >= 0.04)      score += 15;
   else if (likeToViewRatio >= 0.02) score += 8;
   else if (likeToViewRatio < 0.01)  score -= 10;
   score += Math.min(boostCount * 5, 20);
@@ -108,7 +150,6 @@ function calculateCredibilityScore({ isSponsored, hasBoost, likeToViewRatio, boo
 
 async function getYouTubeEvidence(productName) {
   const rejectionReasons = [];
-
   const searchResults = await searchYouTube(productName);
 
   if (searchResults.length === 0) {
@@ -121,6 +162,12 @@ async function getYouTubeEvidence(productName) {
   for (const item of searchResults) {
     const videoId = item.id.videoId;
     const title   = item.snippet.title;
+
+    // Skip Shorts — no spoken content, transcripts unavailable
+    if (title.toLowerCase().includes("#shorts") || title.toLowerCase().includes("shorts")) {
+      rejectionReasons.push({ videoId, title, reason: "Skipped — Short video, no transcript expected" });
+      continue;
+    }
 
     const details = await getVideoDetails(videoId);
     if (!details) {
@@ -145,28 +192,42 @@ async function getYouTubeEvidence(productName) {
 
     const credibilityScore = calculateCredibilityScore({ isSponsored, hasBoost, likeToViewRatio, boostCount });
 
+    // Push without transcript — we fetch transcripts only for the top 5 below
     validated.push({
       videoId,
       title,
-      channelTitle:  details.snippet.channelTitle || "",
+      channelTitle:   details.snippet.channelTitle || "",
       description,
-      publishedAt:   details.snippet.publishedAt || "",
-      thumbnail:     details.snippet.thumbnails?.high?.url || "",
+      transcript:     null,
+      publishedAt:    details.snippet.publishedAt || "",
+      thumbnail:      details.snippet.thumbnails?.high?.url || "",
       viewCount,
       likeCount,
       likeToViewRatio,
-      sponsored: isSponsored,
+      sponsored:      isSponsored,
       credibilityScore,
       url: `https://www.youtube.com/watch?v=${videoId}`,
     });
   }
 
+  // Sort by credibility and take top 5 BEFORE fetching transcripts
+  // so we only fetch transcripts for videos we actually use
   const top5 = validated
     .sort((a, b) => b.credibilityScore - a.credibilityScore)
     .slice(0, 5);
 
+  console.log(`Fetching transcripts for top ${top5.length} videos...`);
+
+  // Fetch transcripts in parallel for speed
+  const top5WithTranscripts = await Promise.all(
+    top5.map(async (v) => {
+      const transcript = await getVideoTranscript(v.videoId);
+      return { ...v, transcript };
+    })
+  );
+
   return {
-    videos: top5,
+    videos:              top5WithTranscripts,
     totalVideosChecked:  searchResults.length,
     totalVideosRejected: searchResults.length - validated.length,
     rejectionReasons,
