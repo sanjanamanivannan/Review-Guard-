@@ -1,70 +1,107 @@
-// services/gemini.js
-// Responsibility: Accept YouTube video URLs + on-page reviews + product name,
-// pass them to Gemini 1.5 Flash (which reads YouTube URLs directly),
-// and return a structured rating object.
-// This module does NOT fetch YouTube data — that is youtube.js's job.
-
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+if (!process.env.GEMINI_API_KEY) {
+  throw new Error("Missing GEMINI_API_KEY in .env");
+}
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-async function generateProductRating(productName, youtubeVideos, pageReviews) {
-  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
+}
 
-  const videoList = youtubeVideos
-    .map(
-      (v, i) =>
-        `Video ${i + 1}: "${v.title}"
-     URL: ${v.url}
-     Views: ${v.viewCount.toLocaleString()}
-     Credibility Score: ${v.credibilityScore}/100
-     Sponsored: ${v.sponsored ? "Yes" : "No"}`
-    )
-    .join("\n\n");
+function cleanJsonText(text) {
+  return text.replace(/```json|```/g, "").trim();
+}
 
-  const reviewText =
-    pageReviews.length > 0
-      ? pageReviews.join("\n---\n")
-      : "No on-page reviews available.";
+function buildVideoEvidence(youtubeVideos) {
+  const safeVideos = safeArray(youtubeVideos);
 
-  const prompt = `
-You are an expert makeup product review analyst.
+  if (safeVideos.length === 0) {
+    return "No external YouTube review evidence available.";
+  }
+
+  return safeVideos
+    .map((v, i) => {
+      const title = v?.title || "Unknown title";
+      const url = v?.url || "No URL provided";
+      const viewCount =
+        typeof v?.viewCount === "number"
+          ? v.viewCount.toLocaleString()
+          : "Unknown";
+      const credibilityScore =
+        typeof v?.credibilityScore === "number"
+          ? v.credibilityScore
+          : "Unknown";
+      const sponsored = v?.sponsored ? "Yes" : "No";
+
+      // These are the fields Gemini should actually analyze.
+      const reviewEvidence =
+        v?.reviewSummary ||
+        v?.snippet ||
+        v?.description ||
+        v?.transcriptExcerpt ||
+        v?.commentsSummary ||
+        "No detailed review text was provided for this video.";
+
+      return `Video ${i + 1}
+Title: ${title}
+URL: ${url}
+Views: ${viewCount}
+Credibility Score: ${credibilityScore}/100
+Sponsored: ${sponsored}
+Reviewer Evidence: ${reviewEvidence}`;
+    })
+    .join("\n\n---\n\n");
+}
+
+async function generateProductRating(productName, youtubeVideos = [], pageReviews = []) {
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+    const safeReviews = safeArray(pageReviews);
+    const videoEvidence = buildVideoEvidence(youtubeVideos);
+
+    const reviewText =
+      safeReviews.length > 0
+        ? safeReviews.join("\n---\n")
+        : "No on-page reviews available.";
+
+    const prompt = `
+You are an expert beauty product review analyst.
 
 Product being analyzed: "${productName}"
 
-TASK:
-You are given ${youtubeVideos.length} YouTube video URLs about this product.
-For each video URL, transcribe and analyze what the creator specifically
-said about "${productName}". Focus on:
-- Their overall opinion of the product
-- Specific pros they mentioned
-- Specific cons or complaints they mentioned
-- Whether their overall recommendation was positive or negative
-- Any mention of skin type suitability, longevity, texture, finish
+Your job is to evaluate the product using:
+1. External YouTube review evidence that has already been extracted for you
+2. On-page reviews from the retailer website
 
-YouTube Videos to analyze:
-${videoList}
+IMPORTANT RULES:
+- Do NOT say you watched, opened, visited, or transcribed any video
+- Only use the review evidence explicitly provided below
+- Summarize what reviewers said about the product itself
+- Give less weight to sponsored videos
+- Give more weight to higher credibility videos
+- Weight YouTube/external evidence at 60%
+- Weight on-page reviews at 40%
+- Focus on claims about performance, skin type, finish, wear time, texture, irritation, shade match, and value
+- Be specific and evidence-based
+- If evidence is limited or mixed, reflect that honestly
 
-On-page reviews from the product's official retail page:
+External YouTube review evidence:
+${videoEvidence}
+
+On-page reviews from the product page:
 ${reviewText}
 
-IMPORTANT INSTRUCTIONS:
-- Visit and transcribe each YouTube URL to understand what each creator said
-- Weight YouTube evidence at 60% of your final rating
-- Weight on-page reviews at 40% of your final rating
-- Look for alignment or contradiction between YouTube opinions and on-page reviews
-- Give less weight to sponsored videos
-- Give more weight to high credibility score videos
-- Base your rating ONLY on evidence found, not assumptions
-
-Return ONLY a valid JSON object with no markdown, no backticks, no extra text:
+Return ONLY a valid JSON object with no markdown and no extra text:
 {
   "rating": "Highly Recommended" | "Recommended" | "Mixed" | "Not Recommended",
-  "score": 0-100,
+  "score": 0,
   "pros": ["specific pro 1", "specific pro 2", "specific pro 3"],
   "cons": ["specific con 1", "specific con 2"],
-  "evidenceSummary": "2-3 sentences summarizing what YouTube creators and reviewers said about this specific product",
-  "onSiteVsExternalGap": "Describe whether website reviews align with or contradict what YouTube creators said. Be specific."
+  "evidenceSummary": "2-3 sentences summarizing what external reviewers and on-page reviewers said about this specific product.",
+  "onSiteVsExternalGap": "State whether the retailer-site reviews align with or contradict the external review evidence, and how."
 }
 
 Rating scale:
@@ -74,21 +111,42 @@ Rating scale:
 0-39 = Not Recommended
 `;
 
-  try {
     const result = await model.generateContent(prompt);
     const text = result.response.text();
-    const clean = text.replace(/```json|```/g, "").trim();
+    const clean = cleanJsonText(text);
+
+
+    console.log("Gemini raw text:", text);
+    console.log("Gemini cleaned text:", clean);
     return JSON.parse(clean);
-  } catch {
-    // Retry once with stricter prompt
+  } catch (error) {
+    console.error("Gemini generateProductRating error:", error);
+
     try {
-      const retryPrompt =
-        prompt + "\n\nYou must return only raw JSON. No explanation. No markdown.";
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
+      const retryPrompt = `
+Return ONLY valid raw JSON for a beauty product review result.
+
+Schema:
+{
+  "rating": "Highly Recommended" | "Recommended" | "Mixed" | "Not Recommended",
+  "score": 0,
+  "pros": [],
+  "cons": [],
+  "evidenceSummary": "",
+  "onSiteVsExternalGap": ""
+}
+`;
+
       const retryResult = await model.generateContent(retryPrompt);
       const retryText = retryResult.response.text();
-      const retryClean = retryText.replace(/```json|```/g, "").trim();
+      const retryClean = cleanJsonText(retryText);
+
       return JSON.parse(retryClean);
-    } catch {
+    } catch (retryError) {
+      console.error("Gemini retry error:", retryError);
+
       return {
         rating: "Mixed",
         score: 50,
