@@ -1,10 +1,9 @@
 // services/youtube.js
 // Responsibility: Search YouTube for product reviews, validate video credibility,
-// pull transcripts, and return structured evidence.
+// and return structured evidence.
 // This module does NOT score or synthesize — that is gemini.js's job.
 
 const axios = require("axios");
-const { YoutubeTranscript } = require("youtube-transcript");
 
 const YOUTUBE_API_BASE = "https://www.googleapis.com/youtube/v3";
 
@@ -120,31 +119,13 @@ function calculateCredibilityScore({ isSponsored, hasBoost, likeToViewRatio, boo
   return Math.max(0, Math.min(100, score));
 }
 
-// ─── STEP 4: Pull transcript ──────────────────────────────────────────────────
-
-async function getTranscript(videoId) {
-  try {
-    const transcript = await YoutubeTranscript.fetchTranscript(videoId);
-    return transcript.map((chunk) => chunk.text);
-  } catch {
-    // Transcript unavailable (disabled captions, private video, etc.) — skip gracefully
-    return [];
-  }
-}
-
 // ─── Main export ──────────────────────────────────────────────────────────────
 
 /**
  * Given a product name, searches YouTube, validates videos for credibility,
- * pulls transcripts from the top 5, and returns structured evidence.
+ * and returns structured evidence.
  *
  * @param {string} productName — e.g. "Rare Beauty Soft Pinch Tinted Lip Oil"
- * @returns {Promise<{
- *   videos: Array,
- *   totalVideosChecked: number,
- *   totalVideosRejected: number,
- *   rejectionReasons: Array
- * }>}
  */
 async function getYouTubeEvidence(productName) {
   const rejectionReasons = [];
@@ -209,12 +190,7 @@ async function getYouTubeEvidence(productName) {
     .sort((a, b) => b.credibilityScore - a.credibilityScore)
     .slice(0, 5);
 
-  // STEP 4 — Pull transcripts for selected videos
-  for (const video of top5) {
-    video.transcriptChunks = await getTranscript(video.videoId);
-  }
-
-  // STEP 5 — Return structured output
+  // STEP 4 — Return structured output
   return {
     videos: top5,
     totalVideosChecked: searchResults.length,

@@ -126,6 +126,45 @@ body {
   display: none;
 }
 
+/* ── Gemini Rating ── */
+.gemini-rating {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #f9fafb;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.gemini-rating-label {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.gemini-score {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.gemini-summary, .gemini-gap {
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.gemini-list {
+  font-size: 12px;
+}
+
+.gemini-list ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+
+.gemini-list li {
+  margin-bottom: 2px;
+}
+
 /* ── TEMP: YouTube test results ── */
 .results-box {
   display: flex;

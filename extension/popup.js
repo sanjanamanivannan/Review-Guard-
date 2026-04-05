@@ -33,7 +33,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const data = await res.json();
-      renderResults(resultsBox, productName, data.youtubeEvidence);
+      renderResults(resultsBox, productName, data);
     } catch (err) {
       showError(resultsBox, err.message);
     } finally {
@@ -66,15 +66,35 @@ function setLoading(btn, resultsBox, productName) {
   resultsBox.innerHTML = `<p class="yt-loading">Searching YouTube for "<strong>${escapeHtml(productName)}</strong>"...</p>`;
 }
 
-function renderResults(box, productName, evidence) {
-  if (!evidence) {
-    showError(box, "No YouTube evidence returned.");
+function renderResults(box, productName, data) {
+  if (!data) {
+    showError(box, "No results returned.");
     return;
   }
 
-  const { videos, totalVideosChecked, totalVideosRejected, rejectionReasons } = evidence;
+  const { rating, score, pros, cons, evidenceSummary, onSiteVsExternalGap, youtubeEvidence } = data;
+  const evidence = youtubeEvidence || {};
+  const { videos = [], totalVideosChecked = 0, totalVideosRejected = 0, rejectionReasons = [] } = evidence;
 
-  let html = `
+  let html = "";
+
+  // ── Gemini Rating ──
+  if (rating) {
+    const ratingColor = { "Highly Recommended": "#16a34a", "Recommended": "#2563eb", "Mixed": "#d97706", "Not Recommended": "#dc2626" }[rating] || "#6b7280";
+    html += `
+      <div class="gemini-rating" style="border-left: 4px solid ${ratingColor};">
+        <div class="gemini-rating-label" style="color:${ratingColor};">${rating}</div>
+        ${score != null ? `<div class="gemini-score">Score: ${score}/100</div>` : ""}
+        ${evidenceSummary ? `<p class="gemini-summary">${escapeHtml(evidenceSummary)}</p>` : ""}
+        ${onSiteVsExternalGap && onSiteVsExternalGap !== "Unknown" ? `<p class="gemini-gap"><strong>On-site vs external:</strong> ${escapeHtml(onSiteVsExternalGap)}</p>` : ""}
+        ${pros && pros.length > 0 ? `<div class="gemini-list"><strong>Pros:</strong><ul>${pros.map(p => `<li>${escapeHtml(p)}</li>`).join("")}</ul></div>` : ""}
+        ${cons && cons.length > 0 ? `<div class="gemini-list"><strong>Cons:</strong><ul>${cons.map(c => `<li>${escapeHtml(c)}</li>`).join("")}</ul></div>` : ""}
+      </div>
+    `;
+  }
+
+  // ── YouTube results header ──
+  html += `
     <div class="yt-header">
       <span class="yt-title">YouTube Results for "<strong>${escapeHtml(productName)}</strong>"</span>
       <span class="yt-meta">${totalVideosChecked} checked · ${totalVideosRejected} rejected · ${videos.length} used</span>
