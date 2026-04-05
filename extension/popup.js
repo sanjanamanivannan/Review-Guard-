@@ -79,6 +79,7 @@ document.addEventListener("DOMContentLoaded", () => {
           ? `<p class="no-results">No reviews matched "${escapeHtml(query)}".</p>`
           : "";
 
+        // Render product info + reviews, then kick off YouTube + Gemini fetch below
         // Render product info + Sephora reviews
         summaryBox.innerHTML = `
           <div class="product-info">
@@ -96,6 +97,7 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         `;
 
+        // Once on-page reviews are rendered, fetch YouTube + Gemini rating
         // Fetch YouTube + Gemini from the backend
         const youtubeBox = document.getElementById("youtubeBox");
         try {
@@ -106,7 +108,7 @@ document.addEventListener("DOMContentLoaded", () => {
               productName: data.productName,
               brand: data.brand,
               onPageRating: data.onPageRating,
-              onPageReviews: data.reviews
+              pageReviews: (data.reviews || []).map(r => r.text),
             })
           });
 
@@ -115,6 +117,8 @@ document.addEventListener("DOMContentLoaded", () => {
             throw new Error(err.error || `Server error ${res.status}`);
           }
 
+          const youtubeData = await res.json();
+          renderYouTubeResults(youtubeBox, data.productName, youtubeData);
           const result = await res.json();
 
           // Render Gemini recommendation at the top
@@ -138,6 +142,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 
+// YOUTUBE + GEMINI RENDERING
 // GEMINI RESULT RENDERING
 
 function renderGeminiResult(box, result) {
@@ -194,15 +199,41 @@ function renderGeminiResult(box, result) {
 
 // YOUTUBE RENDERING
 
-function renderYouTubeResults(box, productName, evidence) {
-  if (!evidence) {
-    box.innerHTML = `<p class="yt-error">No YouTube evidence returned.</p>`;
+function renderYouTubeResults(box, productName, data) {
+  if (!data) {
+    box.innerHTML = `<p class="yt-error">No results returned.</p>`;
     return;
   }
 
-  const { videos, totalVideosChecked, totalVideosRejected, rejectionReasons } = evidence;
+  const { rating, score, pros, cons, evidenceSummary, onSiteVsExternalGap, youtubeEvidence } = data;
+  const evidence = youtubeEvidence || {};
+  const { videos = [], totalVideosChecked = 0, totalVideosRejected = 0, rejectionReasons = [] } = evidence;
 
-  let html = `
+  let html = "";
+
+  // ── Gemini Rating ──
+  if (rating) {
+    const ratingColor = {
+      "Highly Recommended": "#16a34a",
+      "Recommended": "#2563eb",
+      "Mixed": "#d97706",
+      "Not Recommended": "#dc2626"
+    }[rating] || "#6b7280";
+
+    html += `
+      <div class="gemini-rating" style="border-left: 4px solid ${ratingColor};">
+        <div class="gemini-rating-label" style="color:${ratingColor};">${rating}</div>
+        ${score != null ? `<div class="gemini-score">Score: ${score}/100</div>` : ""}
+        ${evidenceSummary ? `<p class="gemini-summary">${escapeHtml(evidenceSummary)}</p>` : ""}
+        ${onSiteVsExternalGap && onSiteVsExternalGap !== "Unknown" ? `<p class="gemini-gap"><strong>On-site vs external:</strong> ${escapeHtml(onSiteVsExternalGap)}</p>` : ""}
+        ${pros && pros.length > 0 ? `<div class="gemini-list"><strong>Pros:</strong><ul>${pros.map(p => `<li>${escapeHtml(p)}</li>`).join("")}</ul></div>` : ""}
+        ${cons && cons.length > 0 ? `<div class="gemini-list"><strong>Cons:</strong><ul>${cons.map(c => `<li>${escapeHtml(c)}</li>`).join("")}</ul></div>` : ""}
+      </div>
+    `;
+  }
+
+  // ── YouTube results ──
+  html += `
     <div class="yt-header">
       <span class="yt-title">YouTube Results for "<strong>${escapeHtml(productName)}</strong>"</span>
       <span class="yt-meta">${totalVideosChecked} checked · ${totalVideosRejected} rejected · ${videos.length} used</span>
@@ -244,4 +275,17 @@ function renderYouTubeResults(box, productName, evidence) {
   }
 
   box.innerHTML = html;
+}
+
+function formatNumber(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
 }
