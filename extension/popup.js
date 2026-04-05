@@ -1,15 +1,34 @@
+// SHARED HELPERS — defined first so every function below can use them
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function formatNumber(n) {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + "K";
+  return String(n);
+}
+
+
 document.addEventListener("DOMContentLoaded", () => {
 
   const summarizeBtn = document.getElementById("summarizeBtn");
   const summaryBox   = document.getElementById("summaryBox");
+  const geminiBox    = document.getElementById("geminiBox");
   const searchInput  = document.getElementById("search");
 
   summarizeBtn.addEventListener("click", async () => {
 
     summaryBox.classList.remove("hidden");
+    geminiBox.classList.remove("hidden");
     summaryBox.innerHTML = `
       <p>Gathering reviews across all pages...</p>
       <p style="font-size: 0.8em; opacity: 0.6;">This may take a few seconds</p>`;
+    geminiBox.innerHTML = `
+      <p style="font-size: 0.8em; opacity: 0.6;">Analyzing with AI...</p>`;
 
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -46,13 +65,6 @@ document.addEventListener("DOMContentLoaded", () => {
           return "★".repeat(num) + "☆".repeat(5 - num);
         }
 
-        // Escapes review text before injecting into innerHTML
-        function escapeHtml(str) {
-          const div = document.createElement("div");
-          div.textContent = str;
-          return div.innerHTML;
-        }
-
         const reviewsHtml = filteredReviews.slice(0, 10).map(r => `
           <li class="review-item">
             <div class="review-meta">
@@ -68,6 +80,7 @@ document.addEventListener("DOMContentLoaded", () => {
           : "";
 
         // Render product info + reviews, then kick off YouTube + Gemini fetch below
+        // Render product info + Sephora reviews
         summaryBox.innerHTML = `
           <div class="product-info">
             <strong class="product-name">${escapeHtml(data.productName || "Unknown Product")}</strong>
@@ -85,6 +98,7 @@ document.addEventListener("DOMContentLoaded", () => {
         `;
 
         // Once on-page reviews are rendered, fetch YouTube + Gemini rating
+        // Fetch YouTube + Gemini from the backend
         const youtubeBox = document.getElementById("youtubeBox");
         try {
           const res = await fetch("http://localhost:5001/analyze", {
@@ -105,9 +119,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
           const youtubeData = await res.json();
           renderYouTubeResults(youtubeBox, data.productName, youtubeData);
+          const result = await res.json();
+
+          // Render Gemini recommendation at the top
+          renderGeminiResult(geminiBox, result);
+
+          // Render YouTube links below the reviews
+          renderYouTubeResults(youtubeBox, data.productName, result.youtubeEvidence);
 
         } catch (err) {
-          youtubeBox.innerHTML = `<p class="yt-error">YouTube fetch failed: ${escapeHtml(err.message)}</p>`;
+          geminiBox.innerHTML = `<p class="yt-error">AI analysis failed: ${escapeHtml(err.message)}</p>`;
+          if (document.getElementById("youtubeBox")) {
+            document.getElementById("youtubeBox").innerHTML = `<p class="yt-error">YouTube fetch failed: ${escapeHtml(err.message)}</p>`;
+          }
         }
       });
 
@@ -119,6 +143,61 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
 // YOUTUBE + GEMINI RENDERING
+// GEMINI RESULT RENDERING
+
+function renderGeminiResult(box, result) {
+  if (!result || !result.rating) {
+    box.innerHTML = `<p class="yt-error">No AI recommendation returned.</p>`;
+    return;
+  }
+
+  const ratingColor = {
+    "Highly Recommended": "score-high",
+    "Recommended": "score-mid",
+    "Mixed": "score-low",
+    "Not Recommended": "score-low"
+  }[result.rating] || "score-mid";
+
+  const pros = (result.pros || []).map(p => `<li>${escapeHtml(p)}</li>`).join("");
+  const cons = (result.cons || []).map(c => `<li>${escapeHtml(c)}</li>`).join("");
+
+  box.innerHTML = `
+    <div class="gemini-header">
+      <span class="gemini-label">AI Recommendation</span>
+      <span class="gemini-rating ${ratingColor}">${escapeHtml(result.rating)}</span>
+    </div>
+
+    ${result.evidenceSummary ? `
+      <p class="gemini-summary">${escapeHtml(result.evidenceSummary)}</p>
+    ` : ""}
+
+    <div class="gemini-pros-cons">
+      ${pros ? `
+        <div class="gemini-pros">
+          <strong>Pros</strong>
+          <ul>${pros}</ul>
+        </div>
+      ` : ""}
+      ${cons ? `
+        <div class="gemini-cons">
+          <strong>Cons</strong>
+          <ul>${cons}</ul>
+        </div>
+      ` : ""}
+    </div>
+
+    ${result.bestFor ? `
+      <p class="gemini-best-for"><strong>Best for:</strong> ${escapeHtml(result.bestFor)}</p>
+    ` : ""}
+
+    ${result.onSiteVsExternalGap ? `
+      <p class="gemini-gap"><strong>Sephora vs YouTube:</strong> ${escapeHtml(result.onSiteVsExternalGap)}</p>
+    ` : ""}
+  `;
+}
+
+
+// YOUTUBE RENDERING
 
 function renderYouTubeResults(box, productName, data) {
   if (!data) {
@@ -168,9 +247,6 @@ function renderYouTubeResults(box, productName, data) {
     for (const v of videos) {
       const scoreClass = v.credibilityScore >= 60 ? "score-high" : v.credibilityScore >= 40 ? "score-mid" : "score-low";
       const sponsoredTag = v.sponsored ? `<span class="tag tag-sponsored">Sponsored</span>` : "";
-      const transcriptTag = v.transcriptChunks?.length > 0
-        ? `<span class="tag tag-transcript">Transcript ✓</span>`
-        : `<span class="tag tag-no-transcript">No transcript</span>`;
 
       html += `
         <div class="yt-card">
@@ -181,7 +257,7 @@ function renderYouTubeResults(box, productName, data) {
           <div class="yt-card-meta">
             <span>${formatNumber(v.viewCount)} views · ${formatNumber(v.likeCount)} likes · ${(v.likeToViewRatio * 100).toFixed(1)}% ratio</span>
           </div>
-          <div class="yt-tags">${sponsoredTag}${transcriptTag}</div>
+          ${sponsoredTag ? `<div class="yt-tags">${sponsoredTag}</div>` : ""}
         </div>
       `;
     }
@@ -211,4 +287,5 @@ function escapeHtml(str) {
   const div = document.createElement("div");
   div.textContent = str;
   return div.innerHTML;
+}
 }
