@@ -35,7 +35,6 @@ function buildVideoEvidence(youtubeVideos) {
           : "Unknown";
       const sponsored = v?.sponsored ? "Yes" : "No";
 
-      // These are the fields Gemini should actually analyze.
       const reviewEvidence =
         v?.reviewSummary ||
         v?.snippet ||
@@ -56,9 +55,9 @@ Reviewer Evidence: ${reviewEvidence}`;
 }
 
 async function generateProductRating(productName, youtubeVideos = [], pageReviews = []) {
-  try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+  try {
     const safeReviews = safeArray(pageReviews);
     const videoEvidence = buildVideoEvidence(youtubeVideos);
 
@@ -84,9 +83,14 @@ IMPORTANT RULES:
 - Give more weight to higher credibility videos
 - Weight YouTube/external evidence at 60%
 - Weight on-page reviews at 40%
-- Focus on claims about performance, skin type, finish, wear time, texture, irritation, shade match, and value
+- Focus on claims about performance, skin type, finish, wear time, texture, irritation, shade match, oxidation, and value
 - Be specific and evidence-based
 - If evidence is limited or mixed, reflect that honestly
+- Keep everything short, punchy, and easy to scan
+- Do NOT write paragraphs
+- Every sentence must be concise
+- Each strength should be a short phrase, not a long sentence
+- Keep the tone polished, modern, and concise
 
 External YouTube review evidence:
 ${videoEvidence}
@@ -98,11 +102,26 @@ Return ONLY a valid JSON object with no markdown and no extra text:
 {
   "rating": "Highly Recommended" | "Recommended" | "Mixed" | "Not Recommended",
   "score": 0,
-  "pros": ["specific pro 1", "specific pro 2", "specific pro 3"],
-  "cons": ["specific con 1", "specific con 2"],
-  "evidenceSummary": "2-3 sentences summarizing what external reviewers and on-page reviewers said about this specific product.",
-  "onSiteVsExternalGap": "State whether the retailer-site reviews align with or contradict the external review evidence, and how."
+  "summaryBullets": [
+    "Short bullet 1",
+    "Short bullet 2"
+  ],
+  "keyConcern": "One short sentence naming the biggest concern.",
+  "strengths": [
+    "Short phrase 1",
+    "Short phrase 2",
+    "Short phrase 3"
+  ],
+  "verdict": "One short sentence with the final takeaway."
 }
+
+FIELD RULES:
+- summaryBullets must contain exactly 2 bullets
+- each summary bullet must be 1 sentence max
+- keyConcern must be 1 sentence max
+- strengths must contain 2 to 4 short phrases
+- verdict must be 1 sentence max
+- Do not repeat the same idea across multiple fields
 
 Rating scale:
 80-100 = Highly Recommended
@@ -115,16 +134,14 @@ Rating scale:
     const text = result.response.text();
     const clean = cleanJsonText(text);
 
-
     console.log("Gemini raw text:", text);
     console.log("Gemini cleaned text:", clean);
+
     return JSON.parse(clean);
   } catch (error) {
     console.error("Gemini generateProductRating error:", error);
 
     try {
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-
       const retryPrompt = `
 Return ONLY valid raw JSON for a beauty product review result.
 
@@ -132,16 +149,25 @@ Schema:
 {
   "rating": "Highly Recommended" | "Recommended" | "Mixed" | "Not Recommended",
   "score": 0,
-  "pros": [],
-  "cons": [],
-  "evidenceSummary": "",
-  "onSiteVsExternalGap": ""
+  "summaryBullets": [
+    "Short bullet 1",
+    "Short bullet 2"
+  ],
+  "keyConcern": "One short sentence naming the biggest concern.",
+  "strengths": [
+    "Short phrase 1",
+    "Short phrase 2"
+  ],
+  "verdict": "One short sentence with the final takeaway."
 }
 `;
 
       const retryResult = await model.generateContent(retryPrompt);
       const retryText = retryResult.response.text();
       const retryClean = cleanJsonText(retryText);
+
+      console.log("Gemini retry raw text:", retryText);
+      console.log("Gemini retry cleaned text:", retryClean);
 
       return JSON.parse(retryClean);
     } catch (retryError) {
@@ -150,10 +176,13 @@ Schema:
       return {
         rating: "Mixed",
         score: 50,
-        pros: [],
-        cons: [],
-        evidenceSummary: "Could not generate summary at this time.",
-        onSiteVsExternalGap: "Unknown",
+        summaryBullets: [
+          "Results were mixed across external and on-site reviews.",
+          "More evidence is needed for a stronger recommendation."
+        ],
+        keyConcern: "Could not confidently identify the biggest concern.",
+        strengths: ["Some positive feedback", "Mixed external sentiment"],
+        verdict: "Promising, but not fully convincing."
       };
     }
   }
