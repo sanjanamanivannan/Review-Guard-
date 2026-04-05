@@ -9,30 +9,32 @@
 <body>
   <div class="popup-card">
     <div class="popup-content">
+
       <div class="intro">
         <h1 class="title">Welcome to ClearCosmetics</h1>
         <p class="description">
-          Your trusted review aggregator for makeup products. Get honest, comprehensive summaries from verified reviews across the web.
+          Your trusted review aggregator for makeup products. Get honest,
+          comprehensive summaries from verified reviews across the web.
         </p>
       </div>
 
-      <!-- TEMP: YouTube test mode — remove when Gemini + scraper are ready -->
       <div class="input-group">
-        <label for="productInput" class="label">Product name or page URL</label>
+        <label for="search" class="label">Search specifications (optional)</label>
         <input
-          id="productInput"
+          id="search"
           type="text"
-          placeholder="e.g., Rare Beauty Soft Pinch Lip Oil"
+          placeholder="e.g., dry skin, vegan, cruelty-free..."
           class="search-input"
         />
       </div>
 
       <button id="summarizeBtn" class="summarize-btn">
-        Search YouTube Reviews
+        Summarize Reviews
       </button>
 
-      <div id="resultsBox" class="results-box hidden"></div>
-      <!-- END TEMP -->
+      <!-- Sephora reviews + YouTube results both render inside here -->
+      <div id="summaryBox" class="summary-box hidden"></div>
+
     </div>
   </div>
 

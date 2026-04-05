@@ -1,74 +1,128 @@
-// TEMP: YouTube test mode — this file will be replaced when Gemini + Sharana's scraper are ready.
-// For now: takes a manually entered product name, hits /analyze, displays raw YouTube evidence.
-
-const BACKEND_URL = "http://localhost:5001";
-
 document.addEventListener("DOMContentLoaded", () => {
-  const btn = document.getElementById("summarizeBtn");
-  const input = document.getElementById("productInput");
-  const resultsBox = document.getElementById("resultsBox");
 
-  btn.addEventListener("click", async () => {
-    const raw = input.value.trim();
-    if (!raw) {
-      showError(resultsBox, "Please enter a product name or URL.");
-      return;
-    }
+  const summarizeBtn = document.getElementById("summarizeBtn");
+  const summaryBox   = document.getElementById("summaryBox");
+  const searchInput  = document.getElementById("search");
 
-    // If it looks like a URL, pull the product name from the path
-    const productName = extractProductName(raw);
+  summarizeBtn.addEventListener("click", async () => {
 
-    setLoading(btn, resultsBox, productName);
+    summaryBox.classList.remove("hidden");
+    summaryBox.innerHTML = `
+      <p>Gathering reviews across all pages...</p>
+      <p style="font-size: 0.8em; opacity: 0.6;">This may take a few seconds</p>`;
 
     try {
-      const res = await fetch(`${BACKEND_URL}/analyze`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productName }),
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+      chrome.tabs.sendMessage(tab.id, { type: "EXTRACT_PRODUCT_DATA" }, async (response) => {
+
+        if (chrome.runtime.lastError) {
+          summaryBox.innerHTML = `<p>Error: ${chrome.runtime.lastError.message}</p>`;
+          return;
+        }
+
+        if (!response || !response.success) {
+          summaryBox.innerHTML = `<p>Failed to extract data. Make sure you're on a product page.</p>`;
+          return;
+        }
+
+        const data = response.data;
+
+        // Filter reviews by search query — matches on text or shade name
+        const query = searchInput.value.trim().toLowerCase();
+        let filteredReviews = data.reviews || [];
+
+        if (query) {
+          filteredReviews = filteredReviews.filter(r =>
+            r.text.toLowerCase().includes(query) ||
+            (r.shade && r.shade.toLowerCase().includes(query))
+          );
+        }
+
+        // Converts "4" → "★★★★☆"
+        function renderStars(rating) {
+          if (!rating) return "No rating";
+          const num = Math.round(parseFloat(rating));
+          return "★".repeat(num) + "☆".repeat(5 - num);
+        }
+
+        // Escapes review text before injecting into innerHTML
+        function escapeHtml(str) {
+          const div = document.createElement("div");
+          div.textContent = str;
+          return div.innerHTML;
+        }
+
+        const reviewsHtml = filteredReviews.slice(0, 10).map(r => `
+          <li class="review-item">
+            <div class="review-meta">
+              <span class="review-stars">${renderStars(r.rating)}</span>
+              ${r.shade ? `<span class="review-shade">Shade: ${escapeHtml(r.shade)}</span>` : ""}
+            </div>
+            <span class="review-text">${escapeHtml(r.text)}</span>
+          </li>
+        `).join("");
+
+        const noResults = filteredReviews.length === 0
+          ? `<p class="no-results">No reviews matched "${escapeHtml(query)}".</p>`
+          : "";
+
+        // Render product info + reviews, then kick off YouTube + Gemini fetch below
+        summaryBox.innerHTML = `
+          <div class="product-info">
+            <strong class="product-name">${escapeHtml(data.productName || "Unknown Product")}</strong>
+            <span class="product-brand">Brand: ${escapeHtml(data.brand || "N/A")}</span>
+            <span class="product-price">Price: ${escapeHtml(data.price || "N/A")}</span>
+          </div>
+          <div class="reviews-section">
+            <strong class="reviews-heading">Top Reviews:</strong>
+            ${noResults}
+            <ul class="review-list">${reviewsHtml}</ul>
+          </div>
+          <div id="youtubeBox">
+            <p style="font-size: 0.8em; opacity: 0.6;">Loading YouTube reviews...</p>
+          </div>
+        `;
+
+        // Once on-page reviews are rendered, fetch YouTube + Gemini rating
+        const youtubeBox = document.getElementById("youtubeBox");
+        try {
+          const res = await fetch("http://localhost:5001/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              productName: data.productName,
+              brand: data.brand,
+              onPageRating: data.onPageRating,
+              pageReviews: (data.reviews || []).map(r => r.text),
+            })
+          });
+
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || `Server error ${res.status}`);
+          }
+
+          const youtubeData = await res.json();
+          renderYouTubeResults(youtubeBox, data.productName, youtubeData);
+
+        } catch (err) {
+          youtubeBox.innerHTML = `<p class="yt-error">YouTube fetch failed: ${escapeHtml(err.message)}</p>`;
+        }
       });
 
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || `Server error ${res.status}`);
-      }
-
-      const data = await res.json();
-      renderResults(resultsBox, productName, data);
     } catch (err) {
-      showError(resultsBox, err.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Search YouTube Reviews";
+      summaryBox.innerHTML = `<p>Unexpected error: ${err.message}</p>`;
     }
   });
 });
 
-// If the input is a URL, extract the meaningful product name segment from the path.
-// Falls back to the raw input if it doesn't look like a URL.
-function extractProductName(input) {
-  try {
-    const url = new URL(input);
-    // Take the last non-empty path segment, strip ID suffixes, replace hyphens with spaces
-    const segments = url.pathname.split("/").filter(Boolean);
-    const last = segments[segments.length - 1] || "";
-    // Strip trailing product IDs like -P12345 or ?skuId=xxx
-    const cleaned = last.replace(/-P\d+$/i, "").replace(/-\d+$/, "").replace(/-/g, " ");
-    return cleaned.length > 3 ? cleaned : input;
-  } catch {
-    return input; // not a URL, use as-is
-  }
-}
 
-function setLoading(btn, resultsBox, productName) {
-  btn.disabled = true;
-  btn.textContent = "Searching...";
-  resultsBox.classList.remove("hidden");
-  resultsBox.innerHTML = `<p class="yt-loading">Searching YouTube for "<strong>${escapeHtml(productName)}</strong>"...</p>`;
-}
+// YOUTUBE + GEMINI RENDERING
 
-function renderResults(box, productName, data) {
+function renderYouTubeResults(box, productName, data) {
   if (!data) {
-    showError(box, "No results returned.");
+    box.innerHTML = `<p class="yt-error">No results returned.</p>`;
     return;
   }
 
@@ -80,7 +134,13 @@ function renderResults(box, productName, data) {
 
   // ── Gemini Rating ──
   if (rating) {
-    const ratingColor = { "Highly Recommended": "#16a34a", "Recommended": "#2563eb", "Mixed": "#d97706", "Not Recommended": "#dc2626" }[rating] || "#6b7280";
+    const ratingColor = {
+      "Highly Recommended": "#16a34a",
+      "Recommended": "#2563eb",
+      "Mixed": "#d97706",
+      "Not Recommended": "#dc2626"
+    }[rating] || "#6b7280";
+
     html += `
       <div class="gemini-rating" style="border-left: 4px solid ${ratingColor};">
         <div class="gemini-rating-label" style="color:${ratingColor};">${rating}</div>
@@ -93,7 +153,7 @@ function renderResults(box, productName, data) {
     `;
   }
 
-  // ── YouTube results header ──
+  // ── YouTube results ──
   html += `
     <div class="yt-header">
       <span class="yt-title">YouTube Results for "<strong>${escapeHtml(productName)}</strong>"</span>
@@ -108,7 +168,7 @@ function renderResults(box, productName, data) {
     for (const v of videos) {
       const scoreClass = v.credibilityScore >= 60 ? "score-high" : v.credibilityScore >= 40 ? "score-mid" : "score-low";
       const sponsoredTag = v.sponsored ? `<span class="tag tag-sponsored">Sponsored</span>` : "";
-      const transcriptTag = v.transcriptChunks && v.transcriptChunks.length > 0
+      const transcriptTag = v.transcriptChunks?.length > 0
         ? `<span class="tag tag-transcript">Transcript ✓</span>`
         : `<span class="tag tag-no-transcript">No transcript</span>`;
 
@@ -129,21 +189,16 @@ function renderResults(box, productName, data) {
   }
 
   if (rejectionReasons.length > 0) {
-    html += `<details class="yt-rejected">
-      <summary>${rejectionReasons.length} rejected video(s)</summary>
-      <ul>`;
-    for (const r of rejectionReasons) {
-      html += `<li><strong>${escapeHtml(r.title || r.videoId)}</strong>: ${escapeHtml(r.reason)}</li>`;
-    }
-    html += `</ul></details>`;
+    html += `
+      <details class="yt-rejected">
+        <summary>${rejectionReasons.length} rejected video(s)</summary>
+        <ul>
+          ${rejectionReasons.map(r => `<li><strong>${escapeHtml(r.title || r.videoId)}</strong>: ${escapeHtml(r.reason)}</li>`).join("")}
+        </ul>
+      </details>`;
   }
 
   box.innerHTML = html;
-}
-
-function showError(box, message) {
-  box.classList.remove("hidden");
-  box.innerHTML = `<p class="yt-error">Error: ${escapeHtml(message)}</p>`;
 }
 
 function formatNumber(n) {
